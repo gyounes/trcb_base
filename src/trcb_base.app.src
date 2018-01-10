@@ -1,0 +1,13 @@
+{application,trcb_base,
+             [{description,"Tagged Reliable Causal Stable Broadcast."},
+              {vsn,"0.0.3"},
+              {registered,[]},
+              {maintainers,["Georges Younes"]},
+              {included_applications,[]},
+              {applications,[kernel,stdlib,crypto,lager,time_compat,
+                             rand_compat,partisan,types]},
+              {mod,{trcb_base_app,[]}},
+              {modules,[]},
+              {env,[{trcb_base,"data"}]},
+              {licenses,["Apache 2.0"]},
+              {links,[{"Github","https://github.com/gyounes/trcb_base"}]}]}.
