@@ -40,8 +40,8 @@
 
 -include("trcb_base.hrl").
 
--define(NODES_NUMBER, 5).
--define(MAX_MSG_NUMBER, 5).
+-define(NODES_NUMBER, 10).
+-define(MAX_MSG_NUMBER, 10).
 -define(PEER_PORT, 9000).
 
 suite() ->
@@ -462,11 +462,9 @@ fun_receive(Me, TotalMessages, TotalDelivered, LocalVV, DelvQ, Receiver) ->
     tcbcast ->
       LocalVVNew=vclock:increment(Me, LocalVV),
       rpc:call(Me, trcb_base, tcbcast, [msg, LocalVVNew]),
-      lager:info("delivery of VV ~p at Node ~p", [LocalVVNew, Me]),
       DelvQ1 = DelvQ ++ [LocalVVNew],
       %% For each node, update the number of delivered messages on every node
       TotalDelivered1 = TotalDelivered + 1,
-      ct:pal("delivered ~p of ~p in ~p", [TotalDelivered1, TotalMessages, Me]),
       %% check if all msgs were delivered on all the nodes
       case TotalMessages =:= TotalDelivered1 of
         true ->
@@ -474,17 +472,16 @@ fun_receive(Me, TotalMessages, TotalDelivered, LocalVV, DelvQ, Receiver) ->
         false ->
           fun_receive(Me, TotalMessages, TotalDelivered1, LocalVVNew, DelvQ1, Receiver)
       end;
-    {delivery, MsgVV, _Msg} ->
+    {delivery, Origin, MsgVV, _Msg} ->
       DelvQ1 = DelvQ ++ [MsgVV],
       %% For each node, update the number of delivered messages on every node
       TotalDelivered1 = TotalDelivered + 1,
-      ct:pal("delivered ~p of ~p in ~p", [TotalDelivered1, TotalMessages, Me]),
       %% check if all msgs were delivered on all the nodes
       case TotalMessages =:= TotalDelivered1 of
         true ->
           Receiver ! {done, Me, DelvQ1};
         false ->
-          LocalVVNew=vclock:increment(Me, LocalVV),
+          LocalVVNew=vclock:increment(Origin, LocalVV),
           fun_receive(Me, TotalMessages, TotalDelivered1, LocalVVNew, DelvQ1, Receiver)
       end;
     M ->
@@ -500,9 +497,7 @@ fun_ready_to_check(Nodes, N, Dict, Runner) ->
         true -> 
           fun_ready_to_check(Nodes, N-1, Dict1, Runner);
         false ->
-          %% check causal delivery
-          %% check if all delivered VVs respect causal order
-          fun_check_delivery(Nodes, Dict1)
+          Runner ! {done, Nodes, Dict1}
       end;
     M ->
       ct:fail("fun_ready_to_check :: received incorrect message: ~p", [M])
@@ -519,24 +514,23 @@ fun_send(NodeReceiver, Times) ->
 %% @private
 fun_check_delivery(Nodes, NodeMsgInfoMap) ->
   
-  ct:pal("fun_check_delivery"),
-
   %% check that all delivered VVs are the same
   {_, Node} = lists:nth(1, Nodes),
-  DelMsgQ = dict:fetch(Node, NodeMsgInfoMap),
-  lists:foldl(
+  DelMsgQ = lists:usort(dict:fetch(Node, NodeMsgInfoMap)),
+
+  Test1 = lists:foldl(
     fun(I, AccI) ->
       {_, Node1} = lists:nth(I, Nodes),
-      DelMsgQ1 = dict:fetch(Node1, NodeMsgInfoMap),
-      AccI andalso lists:usort(DelMsgQ) =:= lists:usort(DelMsgQ1)
+      DelMsgQ1 = lists:usort(dict:fetch(Node1, NodeMsgInfoMap)),
+      AccI andalso DelMsgQ =:= DelMsgQ1
     end,
     true,
   lists:seq(2, length(Nodes))),
   
-  lists:foreach(
-    fun({_Name2, Node2}) ->
+  Test2 = lists:foldl(
+    fun({_Name2, Node2}, Acc) ->
       DelMsgQ2 = dict:fetch(Node2, NodeMsgInfoMap),
-      lists:foldl(
+      Acc andalso lists:foldl(
         fun(I, AccI) ->
           lists:foldl(
             fun(J, AccJ) ->
@@ -548,21 +542,36 @@ fun_check_delivery(Nodes, NodeMsgInfoMap) ->
         true,
       lists:seq(1, length(DelMsgQ2)-1))
     end,
-  Nodes).
+    Test1,
+  Nodes),
+
+  case Test2 of
+    true ->
+      ok;
+    false ->
+      ct:fail("fun_check_delivery")
+  end.
+
+%% @private
+fun_check() ->
+  receive
+    {done, Nodes, Dict} ->
+      fun_check_delivery(Nodes, Dict);
+    M ->
+      ct:fail("fun_check :: received incorrect message: ~p", [M])
+  end.
 
 fun_intialize_dict_info(Nodes) ->
-  ct:pal("fun_intialize_dict_info"),  
   lists:foldl(
   fun({_Name, Node}, Acc) ->
-    dict:store(Node, ?MAX_MSG_NUMBER, Acc)
-    % dict:store(Node, rand:uniform(?MAX_MSG_NUMBER), Acc)
+    % dict:store(Node, ?MAX_MSG_NUMBER, Acc)
+    dict:store(Node, rand:uniform(?MAX_MSG_NUMBER), Acc)
   end,
   dict:new(),
   Nodes).
 
 %% private   
 fun_update_full_membership(Nodes) ->   
-  ct:pal("fun_update_full_membership"),
   lists:foreach(fun({_Name, Node}) ->    
       ok = rpc:call(Node, trcb_base, tcbfullmembership, [Nodes])    
   end, Nodes).
@@ -589,8 +598,6 @@ fun_causal_test(Nodes) ->
   %% Spawn a receiver process to collect all delivered msgs dots and stabilized msgs per node
   Receiver = spawn(?MODULE, fun_ready_to_check, [Nodes, length(Nodes), DictInfo, Self]),
      
-  ct:pal("Receiver ~p", [Receiver]),
-
   timer:sleep(1000),
 
   NewDictInfo = lists:foldl(
@@ -600,12 +607,9 @@ fun_causal_test(Nodes) ->
     %% Spawn a receiver process for each node to tbcast and deliver msgs
     NodeReceiver = spawn(?MODULE, fun_receive, [Node, TotNumMsgToRecv, 0, vclock:fresh(), [], Receiver]),
     
-    ct:pal("Node ~p has NodeReceiver ~p", [Node, NodeReceiver]),
-
     %% define a delivery function that notifies the Receiver upon delivery
-    DeliveryFun = fun({MsgVV, Msg}) ->
-      lager:info("delivery of VV ~p at Node ~p", [MsgVV, Node]),
-      NodeReceiver ! {delivery, MsgVV, Msg},
+    DeliveryFun = fun({Origin, MsgVV, Msg}) ->
+      NodeReceiver ! {delivery, Origin, MsgVV, Msg},
       ok
     end,
 
@@ -625,4 +629,6 @@ fun_causal_test(Nodes) ->
   lists:foreach(fun({_Name, Node}) ->
     {MsgNumToSend, NodeReceiver} = dict:fetch(Node, NewDictInfo),
     spawn(?MODULE, fun_send, [NodeReceiver, MsgNumToSend])
-  end, Nodes).
+  end, Nodes),
+
+  fun_check().

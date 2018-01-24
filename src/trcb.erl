@@ -42,7 +42,7 @@ causal_delivery({Origin, MessageBody, MessageVClock}=El, VV, Queue, Function) ->
     case can_be_delivered(MessageVClock, VV, Origin) of
         true ->
             lager:info("Delivering ~p", [MessageVClock]),
-            Function({MessageVClock, MessageBody}),
+            Function({Origin, MessageVClock, MessageBody}),
             NewVV = vclock:increment(Origin, VV),
             NewQueue = lists:delete(El, Queue),
             %% Attempt to stabilize
@@ -60,7 +60,7 @@ try_to_deliever([{Origin, MessageBody, MessageVClock}=El | RQueue], {VV, Queue}=
     case can_be_delivered(MessageVClock, VV, Origin) of
         true ->
             lager:info("Delivering ~p", [MessageVClock]),
-            Function({MessageVClock, MessageBody}),
+            Function({Origin, MessageVClock, MessageBody}),
             NewVV = vclock:increment(Origin, VV),
             NewQueue = lists:delete(El, Queue),
             %% Attempt to stabilize

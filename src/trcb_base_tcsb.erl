@@ -195,6 +195,7 @@ handle_cast({cbcast, MessageBody, MessageVV},
                    metrics=Metrics,
                    stability_function=Fun,
                    rtm=RTM0,
+                   gvv=GVV0,
                    full_membership=FullMembership}=State) ->
 
     %% measure time start local
@@ -204,6 +205,8 @@ handle_cast({cbcast, MessageBody, MessageVV},
     %% Only send to others without me to deliver
     %% as this message is already delievered
     ToMembers = trcb_base_util:without_me(Members),
+
+    GVV = vclock:increment(Actor, GVV0),
 
     %% Generate message.
     %% @todo rmv Actor; could infer it from Dot
@@ -234,7 +237,7 @@ handle_cast({cbcast, MessageBody, MessageVV},
     %% Update the Stable Version Vector.
     SVV = mclock:update_stablevv(RTM, Fun),
 
-    {noreply, State#state{rtm=RTM, svv=SVV}};
+    {noreply, State#state{rtm=RTM, svv=SVV, gvv=GVV}};
 
 handle_cast({tcbcast, MessageVV, MessageBody, MessageActor},
             #state{actor=Actor,
