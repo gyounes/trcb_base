@@ -30,24 +30,25 @@ packageclean:
 check: test xref dialyzer lint
 
 test: ct eunit
+		${REBAR} cover -v
 
 lint:
 	${REBAR} as lint lint
 
-eqc:
-	${REBAR} as test eqc
-
 eunit:
-	${REBAR} as test eunit
+	${REBAR} eunit
 
 ct:
-	pkill -9 beam.smp ; rm -rf priv/lager ; ${REBAR} as test ct
+	${REBAR} ct
 
 shell:
 	${REBAR} shell --apps trcb_base
 
 logs:
 	tail -F priv/lager/*/log/*.log
+
+cover: test
+	open _build/test/cover/index.html
 
 ##
 ## Release targets
