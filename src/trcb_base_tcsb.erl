@@ -195,6 +195,7 @@ handle_cast({cbcast, MessageBody, MessageVV},
                    metrics=Metrics,
                    stability_function=Fun,
                    rtm=RTM0,
+                   recv_cc=RecvCC0,
                    gvv=GVV0,
                    full_membership=FullMembership}=State) ->
 
@@ -217,6 +218,8 @@ handle_cast({cbcast, MessageBody, MessageVV},
     Dot = {Actor, vclock:get_counter(Actor, MessageVV)},
     ?RESENDER:add_exactly_once_queue(Dot, {MessageVV, MessageBody, ToMembers}),
 
+    RecvCC = causal_context:add_dot(Dot, RecvCC0),
+
     %% Transmit to membership.
     trcb_base_util:send(TaggedMsg, ToMembers, Metrics, ?TCSB),
 
@@ -237,7 +240,7 @@ handle_cast({cbcast, MessageBody, MessageVV},
     %% Update the Stable Version Vector.
     SVV = mclock:update_stablevv(RTM, Fun),
 
-    {noreply, State#state{rtm=RTM, svv=SVV, gvv=GVV}};
+    {noreply, State#state{rtm=RTM, svv=SVV, gvv=GVV, recv_cc=RecvCC}};
 
 handle_cast({tcbcast, MessageVV, MessageBody, MessageActor},
             #state{actor=Actor,
