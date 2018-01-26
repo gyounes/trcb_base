@@ -1,0 +1,27 @@
+sudo: false
+language: erlang
+otp_release:
+  - 20.0
+addons:
+  apt:
+    sources:
+      - debian-sid
+    packages:
+      - shellcheck
+before_install:
+  - npm install -g dockerlint
+install:
+  - make
+before_script:
+  - epmd -daemon
+script:
+  - make test
+  - make xref
+  - make dialyzer
+  - make lint
+  - rebar3 coveralls send
+matrix:
+  fast_finish: true
+notifications:
+  slack: haslab:drPoJqAdaKb9M3u8zidrRheS
+  email: false
