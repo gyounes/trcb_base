@@ -26,6 +26,7 @@
 
 %% API
 -export([tcbdelivery/1,
+         tcbgettagdetails/0,
          tcbcast/2,
          tcbstability/1,
          tcbmemory/1,
@@ -46,10 +47,15 @@ stop() ->
 %%% API
 %%%===================================================================
 
-%% Configure the delivery function.
--spec tcbdelivery(function()) -> ok.
-tcbdelivery(DeliveryFunction) ->
-    ?TCSB:tcbdelivery(DeliveryFunction).
+%% Set delivery Notification functoin.
+-spec tcbdelivery(term()) -> ok.
+tcbdelivery(Node) ->
+    ?TCSB:tcbdelivery(Node).
+
+%% Get Tag details.
+-spec tcbgettagdetails() -> {vclock(), function()}.
+tcbgettagdetails() ->
+    ?TCSB:tcbgettagdetails().
 
 %% Broadcast message.
 -spec tcbcast(message(), vclock()) -> ok.

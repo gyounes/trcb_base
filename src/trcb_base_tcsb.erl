@@ -32,7 +32,8 @@
          tcbfullmembership/1]).
 
 %% delivery callbacks
--export([tcbdelivery/1]).
+-export([tcbdelivery/1,
+         tcbgettagdetails/0]).
 
 %% stability callbacks
 -export([tcbstability/1,
@@ -80,10 +81,15 @@ tcbcast(MessageBody, VV) ->
 tcbmemory(CalcFunction) ->
     gen_server:call(?MODULE, {tcbmemory, CalcFunction}, infinity).
 
-%% Configure the delivery function.
--spec tcbdelivery(function()) -> ok.
-tcbdelivery(DeliveryFunction) ->
-    gen_server:call(?MODULE, {tcbdelivery, DeliveryFunction}, infinity).
+%% Set delivery Notification Fun.
+-spec tcbdelivery(term()) -> ok.
+tcbdelivery(Node) ->
+    gen_server:call(?MODULE, {tcbdelivery, Node}, infinity).
+
+%% Get Tag details.
+-spec tcbgettagdetails() -> {vclock(), function()}.
+tcbgettagdetails() ->
+    gen_server:call(?MODULE, getTagDetails, infinity).
 
 %% Configure the stability function.
 -spec tcbstability(function()) -> ok.
@@ -110,18 +116,6 @@ start_link() ->
 %% @private
 -spec init(list()) -> {ok, state_t()}.
 init([]) ->
-    DeliveryFun = fun(Msg) ->
-        lager:info("Message delivered: ~p", [Msg]),
-        ok
-    end,
-
-    StabilityFun = fun(Msg) ->
-        lager:info("Message stabilized: ~p", [Msg]),
-        ok
-    end,
-
-    init([DeliveryFun, StabilityFun]);
-init([DeliveryFun, StabilityFun]) ->
     %% Seed the process at initialization.
     rand_compat:seed(erlang:phash2([node()]),
                      erlang:monotonic_time(),
@@ -141,6 +135,11 @@ init([DeliveryFun, StabilityFun]) ->
     %% Generate local recent timestamp matrix.
     RTM = mclock:fresh(),
 
+    F = fun(Msg) ->
+        lager:info("Message unhandled: ~p", [Msg]),
+        ok
+    end,
+
     {ok, #state{actor=Actor,
                 recv_cc=causal_context:new(),
                 metrics=trcb_base_config:get(lmetrics),
@@ -148,16 +147,30 @@ init([DeliveryFun, StabilityFun]) ->
                 gvv=GVV,
                 svv=SVV,
                 rtm=RTM,
-                delivery_function=DeliveryFun,
-                stability_function=StabilityFun,
+                delivery_function=F,
+                stability_function=F,
                 full_membership=[]}}.
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, state_t()) ->
     {reply, term(), state_t()}.
 
-handle_call({tcbdelivery, DeliveryFunction}, _From, State) ->
-    {reply, ok, State#state{delivery_function=DeliveryFunction}};
+handle_call({tcbdelivery, Node}, _From, State) ->
+    NotifDelvFun = fun({Origin, MsgVV, Msg}) ->
+      Node ! {delivery, Origin, MsgVV, Msg},
+      ok
+    end,
+
+    {reply, ok, State#state{delivery_function=NotifDelvFun}};
+
+handle_call(getTagDetails, _From, State) ->
+    InitialVV = vclock:fresh(),
+
+    TagUpdFun = fun(MsgActor, LocalVV) ->
+      vclock:increment(MsgActor, LocalVV)
+    end,
+
+    {reply, {InitialVV, TagUpdFun}, State};
 
 handle_call({tcbstability, StabilityFunction}, _From, State) ->
     {reply, ok, State#state{stability_function=StabilityFunction}};
