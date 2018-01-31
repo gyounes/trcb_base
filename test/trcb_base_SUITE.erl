@@ -457,10 +457,10 @@ connect(G, N1, N2) ->
   ok.
 
 %% @private
-fun_receive(Me, TotalMessages, TotalDelivered, LocalVV, DelvQ, Receiver) ->
+fun_receive(Me, TotalMessages, TotalDelivered, LocalVV, Fun, DelvQ, Receiver) ->
   receive
     tcbcast ->
-      LocalVVNew=vclock:increment(Me, LocalVV),
+      LocalVVNew=Fun(Me, LocalVV),
       rpc:call(Me, trcb_base, tcbcast, [msg, LocalVVNew]),
       DelvQ1 = DelvQ ++ [LocalVVNew],
       %% For each node, update the number of delivered messages on every node
@@ -470,7 +470,7 @@ fun_receive(Me, TotalMessages, TotalDelivered, LocalVV, DelvQ, Receiver) ->
         true ->
           Receiver ! {done, Me, DelvQ1};
         false ->
-          fun_receive(Me, TotalMessages, TotalDelivered1, LocalVVNew, DelvQ1, Receiver)
+          fun_receive(Me, TotalMessages, TotalDelivered1, LocalVVNew, Fun, DelvQ1, Receiver)
       end;
     {delivery, Origin, MsgVV, _Msg} ->
       DelvQ1 = DelvQ ++ [MsgVV],
@@ -481,8 +481,8 @@ fun_receive(Me, TotalMessages, TotalDelivered, LocalVV, DelvQ, Receiver) ->
         true ->
           Receiver ! {done, Me, DelvQ1};
         false ->
-          LocalVVNew=vclock:increment(Origin, LocalVV),
-          fun_receive(Me, TotalMessages, TotalDelivered1, LocalVVNew, DelvQ1, Receiver)
+          LocalVVNew=Fun(Origin, LocalVV),
+          fun_receive(Me, TotalMessages, TotalDelivered1, LocalVVNew, Fun, DelvQ1, Receiver)
       end;
     M ->
       ct:fail("UNKWONN ~p", [M])
@@ -603,20 +603,19 @@ fun_causal_test(Nodes) ->
   NewDictInfo = lists:foldl(
   fun({_Name, Node}, Acc) ->
     NumMsgToSend = dict:fetch(Node, Acc),
+
+    {InitialVV, TagUpdFun} = rpc:call(Node,
+      trcb_base,
+      tcbgettagdetails,
+      []),
     
     %% Spawn a receiver process for each node to tbcast and deliver msgs
-    NodeReceiver = spawn(?MODULE, fun_receive, [Node, TotNumMsgToRecv, 0, vclock:fresh(), [], Receiver]),
+    NodeReceiver = spawn(?MODULE, fun_receive, [Node, TotNumMsgToRecv, 0, InitialVV, TagUpdFun, [], Receiver]),
     
-    %% define a delivery function that notifies the Receiver upon delivery
-    DeliveryFun = fun({Origin, MsgVV, Msg}) ->
-      NodeReceiver ! {delivery, Origin, MsgVV, Msg},
-      ok
-    end,
-
     ok = rpc:call(Node,
       trcb_base,
       tcbdelivery,
-      [DeliveryFun]),
+      [NodeReceiver]),
     
     dict:store(Node, {NumMsgToSend, NodeReceiver}, Acc)
   end,
